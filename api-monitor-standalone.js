@@ -435,6 +435,19 @@
         }
         
         createUI() {
+            // 确保 document.body 存在
+            if (!document.body) {
+                this.log('⚠️ document.body 不存在，延迟创建UI');
+                setTimeout(() => this.createUI(), 100);
+                return;
+            }
+            
+            // 检查是否已经存在UI元素
+            if (document.getElementById('api-monitor-button')) {
+                this.log('⚠️ UI元素已存在，跳过创建');
+                return;
+            }
+            
             const button = document.createElement('div');
             button.id = 'api-monitor-button';
             button.innerHTML = `
@@ -485,6 +498,19 @@
         }
         
         createPanel() {
+            // 确保 document.body 存在
+            if (!document.body) {
+                this.log('⚠️ document.body 不存在，延迟创建面板');
+                setTimeout(() => this.createPanel(), 100);
+                return;
+            }
+            
+            // 检查是否已经存在面板
+            if (document.getElementById('api-monitor-panel')) {
+                this.log('⚠️ 面板已存在，跳过创建');
+                return;
+            }
+            
             const panel = document.createElement('div');
             panel.id = 'api-monitor-panel';
             panel.style.cssText = `
@@ -599,6 +625,12 @@
         }
         
         showRequestDetail(req) {
+            // 确保 document.body 存在
+            if (!document.body) {
+                this.log('⚠️ document.body 不存在，无法显示详情');
+                return;
+            }
+            
             const detailPanel = document.createElement('div');
             detailPanel.style.cssText = `
                 position: fixed;
@@ -780,4 +812,4 @@
     // 暴露类到全局（可选）
     window.APIMonitor = APIMonitor;
     
-})(window); 
+})(window); 喂醒
