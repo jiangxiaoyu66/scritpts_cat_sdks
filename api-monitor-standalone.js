@@ -158,14 +158,14 @@
                             } catch (e) {
                                 this.log('❌ 处理XHR响应出错:', e);
                             }
-                        }.bind(this));
+                        });
                     }
                     
                     return origSend.apply(this, arguments);
-                }.bind(this);
+                };
                 
                 return xhr;
-            }.bind(this);
+            };
         }
         
         interceptFetch() {
@@ -211,7 +211,7 @@
                 }
                 
                 return origFetch.apply(this, arguments);
-            }.bind(this);
+            };
         }
         
         setupPerformanceObserver() {
