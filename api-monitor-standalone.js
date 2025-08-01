@@ -1,7 +1,7 @@
 /**
- * 独立API监控包
- * 包含完整的监控功能和启动函数
- * 版本: 1.0.0
+ * 通用API监控包
+ * 捕获所有类型的网络请求（XHR、Fetch、JSONP、Script等）
+ * 版本: 2.0.0
  */
 
 (function(window) {
@@ -9,16 +9,15 @@
     
     // 默认配置
     const DEFAULT_CONFIG = {
-        targetPaths: [],
-        allowedDomains: [],
+        targetPaths: [], // 空数组表示捕获所有请求
+        allowedDomains: [], // 空数组表示允许所有域名
         maxStoredRequests: 100,
         captureFields: {
             request: {
                 url: true,
                 method: true,
                 headers: true,
-                payload: true,
-                queryParams: true
+                payload: true
             },
             response: {
                 status: true,
@@ -76,8 +75,8 @@
         
         init() {
             this.log('🚀 API监控器初始化');
-            this.log('监控路径:', this.config.targetPaths);
-            this.log('允许域名:', this.config.allowedDomains);
+            this.log('监控路径:', this.config.targetPaths.length > 0 ? this.config.targetPaths : '所有请求');
+            this.log('允许域名:', this.config.allowedDomains.length > 0 ? this.config.allowedDomains : '所有域名');
             
             if (this.config.autoStart) {
                 this.start();
@@ -94,14 +93,12 @@
                 return;
             }
             
+            this.log('🚀 开始启动监控器...');
+            
             this.interceptXHR();
             this.interceptFetch();
             this.setupPerformanceObserver();
-            this.interceptJSONP();
             this.interceptScriptTags();
-            
-            // 添加全局网络请求监听
-            this.interceptAllNetworkRequests();
             
             this.isMonitoring = true;
             this.log('✅ 监控器已启动');
@@ -126,7 +123,7 @@
         
         interceptXHR() {
             const origXHR = window.XMLHttpRequest;
-            const self = this; // 保存this引用
+            const self = this;
             
             self.log('🔧 开始拦截XHR请求');
             
@@ -136,7 +133,6 @@
                 const origSend = xhr.send;
                 
                 xhr.open = function(method, url) {
-                    self.log(`🔍 XHR open: ${method} ${url}`);
                     xhr._url = url;
                     xhr._method = method;
                     xhr._startTime = Date.now();
@@ -144,38 +140,32 @@
                 };
                 
                 xhr.send = function(body) {
-                    self.log(`🔍 XHR send: ${xhr._method} ${xhr._url}`);
-                    
-                    const hasTargetPath = self.config.targetPaths.some(path => xhr._url.includes(path));
-                    const urlInfo = self.parseURL(xhr._url);
-                    const hasAllowedDomain = self.config.allowedDomains.length === 0 || 
-                                          self.config.allowedDomains.some(domain => urlInfo.domain.includes(domain));
-                    
-                    self.log(`🔍 XHR检查 - URL: ${xhr._url}, 路径匹配: ${hasTargetPath}, 域名匹配: ${hasAllowedDomain}`);
-                    
-                    if (xhr._url && typeof xhr._url === 'string' && hasTargetPath && hasAllowedDomain) {
-                        self.log(`📡 监控XHR请求: ${xhr._method} ${xhr._url}`);
-                        self.log(`🔍 路径匹配: ${hasTargetPath}, 域名匹配: ${hasAllowedDomain}`);
-                        xhr._body = body;
+                    if (xhr._url && typeof xhr._url === 'string') {
+                        const shouldCapture = self.shouldCaptureRequest(xhr._url);
                         
-                        xhr.addEventListener('load', () => {
-                            try {
-                                const duration = Date.now() - xhr._startTime;
-                                const requestData = self.buildRequestData('xhr', {
-                                    method: xhr._method,
-                                    url: xhr._url,
-                                    body: xhr._body,
-                                    status: xhr.status,
-                                    responseText: xhr.responseText,
-                                    responseHeaders: xhr.getAllResponseHeaders(),
-                                    duration: duration
-                                });
-                                
-                                self.saveRequest(requestData);
-                            } catch (e) {
-                                self.log('❌ 处理XHR响应出错:', e);
-                            }
-                        });
+                        if (shouldCapture) {
+                            self.log(`📡 监控XHR请求: ${xhr._method} ${xhr._url}`);
+                            xhr._body = body;
+                            
+                            xhr.addEventListener('load', () => {
+                                try {
+                                    const duration = Date.now() - xhr._startTime;
+                                    const requestData = self.buildRequestData('xhr', {
+                                        method: xhr._method,
+                                        url: xhr._url,
+                                        body: xhr._body,
+                                        status: xhr.status,
+                                        responseText: xhr.responseText,
+                                        responseHeaders: xhr.getAllResponseHeaders(),
+                                        duration: duration
+                                    });
+                                    
+                                    self.saveRequest(requestData);
+                                } catch (e) {
+                                    self.log('❌ 处理XHR响应出错:', e);
+                                }
+                            });
+                        }
                     }
                     
                     return origSend.apply(this, arguments);
@@ -187,7 +177,7 @@
         
         interceptFetch() {
             const origFetch = window.fetch;
-            const self = this; // 保存this引用
+            const self = this;
             
             self.log('🔧 开始拦截Fetch请求');
             
@@ -196,150 +186,43 @@
                 const method = init?.method || 'GET';
                 const body = init?.body;
                 
-                self.log(`🔍 Fetch请求: ${method} ${url}`);
-                
-                const hasTargetPath = self.config.targetPaths.some(path => url.includes(path));
-                const urlInfo = self.parseURL(url);
-                const hasAllowedDomain = self.config.allowedDomains.length === 0 || 
-                                      self.config.allowedDomains.some(domain => urlInfo.domain.includes(domain));
-                
-                self.log(`🔍 Fetch检查 - URL: ${url}, 路径匹配: ${hasTargetPath}, 域名匹配: ${hasAllowedDomain}`);
-                
-                if (url && typeof url === 'string' && hasTargetPath && hasAllowedDomain) {
-                    self.log(`📡 监控Fetch请求: ${method} ${url}`);
-                    self.log(`🔍 路径匹配: ${hasTargetPath}, 域名匹配: ${hasAllowedDomain}`);
-                    const startTime = Date.now();
+                if (url && typeof url === 'string') {
+                    const shouldCapture = self.shouldCaptureRequest(url);
                     
-                    return origFetch.apply(this, arguments)
-                        .then(response => {
-                            const duration = Date.now() - startTime;
-                            const clonedResponse = response.clone();
-                            
-                            clonedResponse.text().then(responseText => {
-                                try {
-                                    const requestData = self.buildRequestData('fetch', {
-                                        method: method,
-                                        url: url,
-                                        body: body,
-                                        headers: init?.headers,
-                                        status: response.status,
-                                        responseText: responseText,
-                                        responseHeaders: self.parseHeaders(response.headers),
-                                        duration: duration
-                                    });
-                                    
-                                    self.saveRequest(requestData);
-                                } catch (e) {
-                                    self.log('❌ 处理Fetch响应出错:', e);
-                                }
-                            });
-                            
-                            return response;
-                        });
-                }
-                
-                return origFetch.apply(this, arguments);
-            };
-        }
-        
-        setupPerformanceObserver() {
-            try {
-                if (typeof PerformanceObserver !== 'undefined') {
-                    const self = this; // 保存this引用
-                    const observer = new PerformanceObserver((list) => {
-                        list.getEntries().forEach(entry => {
-                            if (entry.initiatorType === 'xmlhttprequest' || entry.initiatorType === 'fetch') {
-                                const url = entry.name;
-                                const hasTargetPath = self.config.targetPaths.some(path => url.includes(path));
+                    if (shouldCapture) {
+                        self.log(`📡 监控Fetch请求: ${method} ${url}`);
+                        const startTime = Date.now();
+                        
+                        return origFetch.apply(this, arguments)
+                            .then(response => {
+                                const duration = Date.now() - startTime;
+                                const clonedResponse = response.clone();
                                 
-                                if (url && typeof url === 'string' && hasTargetPath) {
-                                    self.log(`📊 Performance API检测到目标请求: ${url}`);
-                                }
-                            }
-                        });
-                    });
-                    
-                    observer.observe({entryTypes: ['resource']});
-                    this.observers.push(observer);
-                    this.log('✅ Performance Observer已设置');
-                }
-            } catch (e) {
-                this.log('❌ 设置Performance Observer失败:', e);
-            }
-        }
-        
-        interceptJSONP() {
-            const self = this;
-            self.log('🔧 开始拦截JSONP请求');
-            
-            // 拦截动态创建的script标签
-            const originalCreateElement = document.createElement;
-            document.createElement = function(tagName) {
-                const element = originalCreateElement.call(this, tagName);
-                
-                if (tagName.toLowerCase() === 'script') {
-                    const originalSetAttribute = element.setAttribute;
-                    const originalSrc = Object.getOwnPropertyDescriptor(HTMLScriptElement.prototype, 'src');
-                    
-                    element.setAttribute = function(name, value) {
-                        if (name === 'src') {
-                            self.log(`🔍 JSONP Script src: ${value}`);
-                            const hasTargetPath = self.config.targetPaths.some(path => value.includes(path));
-                            const urlInfo = self.parseURL(value);
-                            const hasAllowedDomain = self.config.allowedDomains.length === 0 || 
-                                                  self.config.allowedDomains.some(domain => urlInfo.domain.includes(domain));
-                            
-                            if (hasTargetPath && hasAllowedDomain) {
-                                self.log(`📡 监控JSONP请求: ${value}`);
-                                const startTime = Date.now();
-                                
-                                element.addEventListener('load', () => {
-                                    const duration = Date.now() - startTime;
-                                    const requestData = self.buildRequestData('jsonp', {
-                                        method: 'GET',
-                                        url: value,
-                                        status: 200,
-                                        duration: duration
-                                    });
-                                    self.saveRequest(requestData);
-                                });
-                            }
-                        }
-                        return originalSetAttribute.call(this, name, value);
-                    };
-                    
-                    if (originalSrc) {
-                        Object.defineProperty(element, 'src', {
-                            set: function(value) {
-                                self.log(`🔍 JSONP Script src: ${value}`);
-                                const hasTargetPath = self.config.targetPaths.some(path => value.includes(path));
-                                const urlInfo = self.parseURL(value);
-                                const hasAllowedDomain = self.config.allowedDomains.length === 0 || 
-                                                      self.config.allowedDomains.some(domain => urlInfo.domain.includes(domain));
-                                
-                                if (hasTargetPath && hasAllowedDomain) {
-                                    self.log(`📡 监控JSONP请求: ${value}`);
-                                    const startTime = Date.now();
-                                    
-                                    element.addEventListener('load', () => {
-                                        const duration = Date.now() - startTime;
-                                        const requestData = self.buildRequestData('jsonp', {
-                                            method: 'GET',
-                                            url: value,
-                                            status: 200,
+                                clonedResponse.text().then(responseText => {
+                                    try {
+                                        const requestData = self.buildRequestData('fetch', {
+                                            method: method,
+                                            url: url,
+                                            body: body,
+                                            headers: init?.headers,
+                                            status: response.status,
+                                            responseText: responseText,
+                                            responseHeaders: self.parseHeaders(response.headers),
                                             duration: duration
                                         });
+                                        
                                         self.saveRequest(requestData);
-                                    });
-                                }
-                                originalSrc.set.call(this, value);
-                            },
-                            get: originalSrc.get
-                        });
+                                    } catch (e) {
+                                        self.log('❌ 处理Fetch响应出错:', e);
+                                    }
+                                });
+                                
+                                return response;
+                            });
                     }
                 }
                 
-                return element;
+                return origFetch.apply(this, arguments);
             };
         }
         
@@ -354,13 +237,9 @@
                         if (node.nodeType === Node.ELEMENT_NODE && node.tagName === 'SCRIPT') {
                             const src = node.src;
                             if (src) {
-                                self.log(`🔍 检测到Script标签: ${src}`);
-                                const hasTargetPath = self.config.targetPaths.some(path => src.includes(path));
-                                const urlInfo = self.parseURL(src);
-                                const hasAllowedDomain = self.config.allowedDomains.length === 0 || 
-                                                      self.config.allowedDomains.some(domain => urlInfo.domain.includes(domain));
+                                const shouldCapture = self.shouldCaptureRequest(src);
                                 
-                                if (hasTargetPath && hasAllowedDomain) {
+                                if (shouldCapture) {
                                     self.log(`📡 监控Script标签请求: ${src}`);
                                     const startTime = Date.now();
                                     
@@ -389,61 +268,65 @@
             this.observers.push(observer);
         }
         
-        interceptAllNetworkRequests() {
-            const self = this;
-            self.log('🔧 开始全局网络请求监听');
-            
-            // 监听所有网络请求
-            const originalFetch = window.fetch;
-            const originalXHR = window.XMLHttpRequest;
-            
-            // 重写 fetch
-            window.fetch = function(input, init) {
-                const url = typeof input === 'string' ? input : input?.url;
-                const method = init?.method || 'GET';
-                
-                self.log(`🌐 全局Fetch请求: ${method} ${url}`);
-                
-                return originalFetch.apply(this, arguments);
-            };
-            
-            // 重写 XMLHttpRequest
-            const originalXHRConstructor = window.XMLHttpRequest;
-            window.XMLHttpRequest = function() {
-                const xhr = new originalXHRConstructor();
-                const originalOpen = xhr.open;
-                const originalSend = xhr.send;
-                
-                xhr.open = function(method, url) {
-                    self.log(`🌐 全局XHR请求: ${method} ${url}`);
-                    return originalOpen.apply(this, arguments);
-                };
-                
-                xhr.send = function(body) {
-                    return originalSend.apply(this, arguments);
-                };
-                
-                return xhr;
-            };
-            
-            // 监听 Performance API
-            if (typeof PerformanceObserver !== 'undefined') {
-                const observer = new PerformanceObserver((list) => {
-                    list.getEntries().forEach(entry => {
-                        if (entry.initiatorType === 'xmlhttprequest' || entry.initiatorType === 'fetch' || entry.initiatorType === 'script') {
-                            self.log(`🌐 Performance API: ${entry.initiatorType} ${entry.name}`);
-                        }
+        setupPerformanceObserver() {
+            try {
+                if (typeof PerformanceObserver !== 'undefined') {
+                    const self = this;
+                    const observer = new PerformanceObserver((list) => {
+                        list.getEntries().forEach(entry => {
+                            if (entry.initiatorType === 'xmlhttprequest' || entry.initiatorType === 'fetch' || entry.initiatorType === 'script') {
+                                const url = entry.name;
+                                const shouldCapture = self.shouldCaptureRequest(url);
+                                
+                                if (shouldCapture) {
+                                    self.log(`📊 Performance API检测到请求: ${url}`);
+                                    
+                                    // 基于Performance API捕获请求
+                                    const requestData = self.buildRequestData('performance', {
+                                        method: 'GET',
+                                        url: url,
+                                        status: 200,
+                                        duration: entry.duration,
+                                        initiator: entry.initiatorType
+                                    });
+                                    
+                                    self.saveRequest(requestData);
+                                }
+                            }
+                        });
                     });
-                });
-                
-                observer.observe({entryTypes: ['resource']});
-                this.observers.push(observer);
+                    
+                    observer.observe({entryTypes: ['resource']});
+                    this.observers.push(observer);
+                    this.log('✅ Performance Observer已设置');
+                }
+            } catch (e) {
+                this.log('❌ 设置Performance Observer失败:', e);
             }
         }
         
-        buildRequestData(type, data) {
-            this.log(`🔨 构建请求数据: ${type} - ${data.url}`);
+        shouldCaptureRequest(url) {
+            // 如果没有设置目标路径，捕获所有请求
+            if (this.config.targetPaths.length === 0) {
+                return true;
+            }
             
+            // 检查URL是否包含目标路径
+            const hasTargetPath = this.config.targetPaths.some(path => url.includes(path));
+            
+            // 如果没有设置允许域名，只检查路径
+            if (this.config.allowedDomains.length === 0) {
+                return hasTargetPath;
+            }
+            
+            // 检查域名和路径
+            const urlInfo = this.parseURL(url);
+            const hasAllowedDomain = this.config.allowedDomains.some(domain => urlInfo.domain.includes(domain));
+            
+            return hasTargetPath && hasAllowedDomain;
+        }
+        
+        buildRequestData(type, data) {
             const requestData = {
                 id: this.generateId(),
                 type: type
@@ -561,7 +444,6 @@
         
         saveRequest(data) {
             this.log('💾 保存请求:', data);
-            this.log(`📊 当前已捕获 ${this.capturedRequests.length} 个请求`);
             
             this.capturedRequests.push(data);
             
@@ -576,7 +458,6 @@
             }
             
             this.triggerEvent('requestCaptured', data);
-            this.log(`✅ 请求已保存，总数: ${this.capturedRequests.length}`);
         }
         
         saveToStorage() {
@@ -1018,4 +899,4 @@
     // 暴露类到全局（可选）
     window.APIMonitor = APIMonitor;
     
-})(window); 喂醒
+})(window);
